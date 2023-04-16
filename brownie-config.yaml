@@ -1,0 +1,9 @@
+networks:
+  default: development
+  development:
+    host: http://127.0.0.1
+    port: 8545
+    chainid: 56
+    accounts: 20
+    evm_version: istanbul
+    gas_limit: 12000000

@@ -1,0 +1,4 @@
+.hypothesis/
+__pycache__/
+venv/
+hardhat-bsc-fork/node_modules/
