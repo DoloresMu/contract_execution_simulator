@@ -1,0 +1,8 @@
+json
+requests
+traceback
+pathlib
+web3==5.23.0
+eth-account==0.5.6
+brownie==1.17.2
+Flask==2.1.1
