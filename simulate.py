@@ -47,13 +47,14 @@ class MockContract:
 
     def __init__(self, contract_address):
         contract_address = Web3.toChecksumAddress(contract_address)
-        bscscan_api_key = ""
+        bscscan_api_key = "Y7XSHW2HQYG56EZWKNR39QCPEZ3KCI5B7E"
 
         output_file = Path("./contracts/contract_abi.json")
 
         url = f"https://api.bscscan.com/api?module=contract&action=getabi&address={contract_address}&apikey={bscscan_api_key}"
         response = requests.get(url)
         data = response.json()
+
         contract_abi = json.loads(data['result'])
 
         with output_file.open(mode="w") as f:
@@ -80,14 +81,56 @@ class MockContract:
         print(self.bob)
 
 
+    def reset_hardhat_network(self):
+        current_block_number = self.web3.eth.blockNumber
+        self.web3.provider.make_request("hardhat_reset", [{"forking": {"jsonRpcUrl": "http://127.0.0.1:8545", "blockNumber": current_block_number}}])
+
+
 
     def mock_call_contract_function(self, sender_address, value, function_name, *args, **kwargs):
+        #self.reset_hardhat_network()
         functions = [item for item in self.contract.abi if item["type"] == "function" and item["name"] == function_name]
         sender_address = self.web3.toChecksumAddress(sender_address)
         receiver_address = self.web3.toChecksumAddress(args[0])
         args_list = list(args)
         args_list[0] = self.web3.toChecksumAddress(args[0])
         args = tuple(args_list)
+
+
+
+
+        # to be commented:
+        pre_funded_account_address = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+        pre_funded_account_private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+        desired_balance = self.web3.toWei(1, "ether") 
+        gas_price = self.web3.eth.gasPrice  # Get the current gas price
+
+        nonce = self.web3.eth.getTransactionCount(pre_funded_account_address)
+        transaction = {
+            'to': sender_address,
+            'value': desired_balance,
+            'gas': 21000,
+            'gasPrice': gas_price,
+            'nonce': nonce,
+            'chainId': self.web3.eth.chainId
+        }
+
+        signed_txn = self.web3.eth.account.signTransaction(transaction, pre_funded_account_private_key)
+        txn_hash = self.web3.eth.sendRawTransaction(signed_txn.rawTransaction)
+        txn_receipt = self.web3.eth.waitForTransactionReceipt(txn_hash)
+
+
+
+        def get_all_view_function_values(contract, address):
+            values = {}
+            for item in contract.abi:
+                if item['type'] == 'function' and item['stateMutability'] == 'view':
+                    try:
+                        method = contract.functions.__getitem__(item['name'])
+                        values[item['name']] = method(address).call()
+                    except Exception as e:
+                        print(f"Error calling view function '{item['name']}': {e}")
+            return values
 
         if len(functions) == 0:
             print(f"No function found with the name `{function_name}`")
@@ -100,8 +143,10 @@ class MockContract:
             try:
                 method = self.contract.functions.__getitem__(function['name'])
 
-                initial_sender_balance = self.contract.functions.balanceOf(sender_address).call()
-                initial_receiver_balance = self.contract.functions.balanceOf(receiver_address).call()
+                
+                initial_sender_view_values = get_all_view_function_values(self.contract, sender_address)
+                initial_receiver_view_values = get_all_view_function_values(self.contract, receiver_address)
+
 
                 function = self.contract.get_function_by_name(function_name)
 
@@ -115,16 +160,40 @@ class MockContract:
                 })
 
                 tx_hash = self.web3.eth.send_transaction(tx)
+                receipt = self.web3.eth.waitForTransactionReceipt(tx_hash)
+
+                internal_transactions = []
+
+                for log in receipt['logs']:
+                    try:
+                        # Find the matching event in the contract ABI
+                        event_abi = None
+                        for item in self.contract.abi:
+                            if item['type'] == 'event' and log['topics'][0] == self.web3.sha3(text=item['signature']).hex():
+                                event_abi = item
+                                break
+
+                        if event_abi is not None:
+                            # Use the event ABI to decode the log
+                            event_data = self.web3.eth.abi.decodeLog(event_abi['inputs'], log['data'], log['topics'][1:])
+                            event_args = dict(zip([input['name'] for input in event_abi['inputs']], event_data))
+
+                            internal_transactions.append({
+                                "event_name": event_abi['name'],
+                                "args": event_args,
+                            })
+
+                    except Exception as e:
+                        print(f"Error decoding log: {e}")
+
+
 
                 self.stop_impersonating_account(sender_address)
 
                 print(f"Function call result: {tx_hash}")
 
-                final_sender_balance = self.contract.functions.balanceOf(sender_address).call()
-                final_receiver_balance = self.contract.functions.balanceOf(receiver_address).call()
-
-                sender_balance_change = final_sender_balance - initial_sender_balance
-                receiver_balance_change = final_receiver_balance - initial_receiver_balance
+                final_sender_view_values = get_all_view_function_values(self.contract, sender_address)
+                final_receiver_view_values = get_all_view_function_values(self.contract, receiver_address)
 
                 transaction_details = {
                     "function_name": function_name,
@@ -136,26 +205,25 @@ class MockContract:
                 state_change_summary = {
                     "sender": {
                         "address": sender_address,
-                        "initial_balance": initial_sender_balance,
-                        "final_balance": final_sender_balance,
-                        "balance_change": sender_balance_change
+                        "initial_state": initial_sender_view_values,
+                        "final_state": final_sender_view_values
                     },
                     "receiver": {
                         "address": receiver_address,
-                        "initial_balance": initial_receiver_balance,
-                        "final_balance": final_receiver_balance,
-                        "balance_change": receiver_balance_change
-                    }
+                        "initial_state": initial_receiver_view_values,
+                        "final_state": final_receiver_view_values,
+                    },
+                    'internal_transactions': internal_transactions
                 }
 
-                return transaction_details, state_change_summary
+                return transaction_details, state_change_summary, None
 
             except Exception as e:
                 print(f"Function invocation failed: {e}")
                 traceback.print_exc()
-                return None, None
+                return None, None, str(e)
 
-        return None, None
+        return None, None, "function not found in contract"
 
 
 if __name__ == "__main__":
