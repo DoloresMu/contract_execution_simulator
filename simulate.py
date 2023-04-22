@@ -87,7 +87,7 @@ class MockContract:
 
 
 
-    def mock_call_contract_function(self, sender_address, value, function_name, *args, **kwargs):
+    def mock_call_contract_function(self, mode, sender_address, value, function_name,  *args, **kwargs):
         #self.reset_hardhat_network()
         functions = [item for item in self.contract.abi if item["type"] == "function" and item["name"] == function_name]
         sender_address = self.web3.toChecksumAddress(sender_address)
@@ -99,26 +99,24 @@ class MockContract:
 
 
         
-        # to be commented:
-        pre_funded_account = accounts[0]
-        desired_balance = self.web3.toWei(1, "ether") 
-        gas_price = self.web3.eth.gasPrice  # Get the current gas price
+        if mode == "force":
+            pre_funded_account = accounts[0]
+            desired_balance = self.web3.toWei(1, "ether") 
+            gas_price = self.web3.eth.gasPrice  # Get the current gas price
 
-        #nonce = self.web3.eth.getTransactionCount(pre_funded_account.address)
-        transaction = {
-            'to': sender_address,
-            'value': desired_balance,
-            'gas': 21000,
-            'gasPrice': gas_price,
-            #'nonce': nonce,
-            'chainId': self.web3.eth.chainId
-        }
+            transaction = {
+                'to': sender_address,
+                'value': desired_balance,
+                'gas': 21000,
+                'gasPrice': gas_price,
+                'chainId': self.web3.eth.chainId
+            }
 
-        self.impersonate_account(pre_funded_account.address)
-        tx_hash = self.web3.eth.send_transaction(transaction)
-        receipt = self.web3.eth.waitForTransactionReceipt(tx_hash)
+            self.impersonate_account(pre_funded_account.address)
+            tx_hash = self.web3.eth.send_transaction(transaction)
+            receipt = self.web3.eth.waitForTransactionReceipt(tx_hash)
 
-        self.stop_impersonating_account(pre_funded_account.address)
+            self.stop_impersonating_account(pre_funded_account.address)
 
 
         def get_all_view_function_values(contract, address):
@@ -146,9 +144,17 @@ class MockContract:
                 
                 initial_sender_view_values = get_all_view_function_values(self.contract, sender_address)
                 initial_receiver_view_values = get_all_view_function_values(self.contract, receiver_address)
+                try:
+                    initial_sender_balance = self.contract.functions.balanceOf(sender_address).call()
+                    initial_receiver_balance = self.contract.functions.balanceOf(receiver_address).call()
+                except Exception as e:
+                    traceback.print_exc()
+                    initial_sender_balance = 0
+                    initial_receiver_balance = 0
 
 
                 function = self.contract.get_function_by_name(function_name)
+
 
                 self.impersonate_account(sender_address)
 
@@ -161,6 +167,8 @@ class MockContract:
 
                 tx_hash = self.web3.eth.send_transaction(tx)
                 receipt = self.web3.eth.waitForTransactionReceipt(tx_hash)
+
+                
 
                 internal_transactions = []
 
@@ -195,6 +203,14 @@ class MockContract:
                 final_sender_view_values = get_all_view_function_values(self.contract, sender_address)
                 final_receiver_view_values = get_all_view_function_values(self.contract, receiver_address)
 
+                try:
+                    final_sender_balance = self.contract.functions.balanceOf(sender_address).call()
+                    final_receiver_balance = self.contract.functions.balanceOf(receiver_address).call()
+                except:
+                    print()
+                    final_sender_balance = 0
+                    final_receiver_balance = 0
+
                 transaction_details = {
                     "function_name": function_name,
                     "sender_address": sender_address,
@@ -203,18 +219,30 @@ class MockContract:
                 }
 
                 state_change_summary = {
-                    "sender": {
-                        "address": sender_address,
-                        "initial_state": initial_sender_view_values,
+                    "statechange":{
+                        "sender": {
+                            "totalBalance": final_sender_balance - initial_sender_balance,
+                        },
+                        "receiver": {
+                            "totalBalance": final_receiver_balance - initial_receiver_balance,
+                        }
+                    },
+                    "details":{
+                        "sender": {
+                            "address": sender_address,
+                            "initial_state": initial_sender_view_values,
                         "final_state": final_sender_view_values
                     },
-                    "receiver": {
-                        "address": receiver_address,
-                        "initial_state": initial_receiver_view_values,
+                        "receiver": {
+                            "address": receiver_address,
+                            "initial_state": initial_receiver_view_values,
                         "final_state": final_receiver_view_values,
                     },
-                    'internal_transactions': internal_transactions
+                      'internal_transactions': internal_transactions
+                    }
+
                 }
+                    
 
                 return transaction_details, state_change_summary, None
 

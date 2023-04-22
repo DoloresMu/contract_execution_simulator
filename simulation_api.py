@@ -17,12 +17,17 @@ def mock_call():
     sender_address = data['sender_address']
     value = data['value']
     function_name = data['function_name']
+    
+    if 'mode' in data and data['mode'] == 'force':
+        mode = 'force'
+    else:
+        mode = 'default'
 
     # Initialize the Mock_Contract object with the given contract address
     mock_contract = MockContract(contract_address)
 
     # Call the mock_call_contract_function and pass the necessary parameters
-    result = mock_contract.mock_call_contract_function(sender_address, value, function_name, *data.get('args', []), **data.get('kwargs', {}))
+    result = mock_contract.mock_call_contract_function(mode,sender_address, value, function_name, *data.get('args', []), **data.get('kwargs', {}))
 
     return jsonify(result)
 
