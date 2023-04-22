@@ -86,6 +86,7 @@ class MockContract:
         self.web3.provider.make_request("hardhat_reset", [{"forking": {"jsonRpcUrl": "http://127.0.0.1:8545", "blockNumber": current_block_number}}])
 
 
+    
 
     def mock_call_contract_function(self, mode, sender_address, value, function_name,  *args, **kwargs):
         #self.reset_hardhat_network()
@@ -252,6 +253,153 @@ class MockContract:
                 return None, None, str(e)
 
         return None, None, "function not found in contract"
+
+
+    def mock_transaction(self, mode, sender_address, value, data:str):
+        #self.reset_hardhat_network()
+        functions = [item for item in self.contract.abi if item["type"] == "function" and item["name"] == function_name]
+        sender_address = self.web3.toChecksumAddress(sender_address)
+        receiver_address = self.web3.toChecksumAddress(args[0])
+        args_list = list(args)
+        args_list[0] = self.web3.toChecksumAddress(args[0])
+        args = tuple(args_list)
+
+        
+        if mode == "force":
+            pre_funded_account = accounts[0]
+            desired_balance = self.web3.toWei(1, "ether") 
+            gas_price = self.web3.eth.gasPrice  # Get the current gas price
+
+            transaction = {
+                'to': sender_address,
+                'value': desired_balance,
+                'gas': 21000,
+                'gasPrice': gas_price,
+                'chainId': self.web3.eth.chainId
+            }
+
+            self.impersonate_account(pre_funded_account.address)
+            tx_hash = self.web3.eth.send_transaction(transaction)
+            receipt = self.web3.eth.waitForTransactionReceipt(tx_hash)
+
+            self.stop_impersonating_account(pre_funded_account.address)
+
+
+        def get_all_view_function_values(contract, address):
+            values = {}
+            for item in contract.abi:
+                if item['type'] == 'function' and item['stateMutability'] == 'view':
+                    try:
+                        method = contract.functions.__getitem__(item['name'])
+                        values[item['name']] = method(address).call()
+                    except Exception as e:
+                        print(f"Error calling view function '{item['name']}': {e}")
+            return values
+
+
+        initial_sender_view_values = get_all_view_function_values(self.contract, sender_address)
+        initial_receiver_view_values = get_all_view_function_values(self.contract, receiver_address)
+        try:
+            initial_sender_balance = self.contract.functions.balanceOf(sender_address).call()
+            initial_receiver_balance = self.contract.functions.balanceOf(receiver_address).call()
+        except Exception as e:
+            traceback.print_exc()
+            initial_sender_balance = 0
+            initial_receiver_balance = 0
+
+        self.impersonate_account(sender_address)
+
+        tx = {
+            "from": sender_address,
+            "to": self.contract.address,
+            "gas": 30000000,
+            "value": 0,
+            "data": data,
+            "gasPrice": self.web3.toWei('5', 'gwei')
+        }
+        tx_hash = self.web3.eth.send_transaction(tx)
+        receipt = self.web3.eth.waitForTransactionReceipt(tx_hash)
+
+                
+
+        internal_transactions = []
+
+        for log in receipt['logs']:
+            try:
+                # Find the matching event in the contract ABI
+                event_abi = None
+                for item in self.contract.abi:
+                    if item['type'] == 'event' and log['topics'][0] == self.web3.sha3(text=item['signature']).hex():
+                        event_abi = item
+                        break
+
+                if event_abi is not None:
+                    # Use the event ABI to decode the log
+                    event_data = self.web3.eth.abi.decodeLog(event_abi['inputs'], log['data'], log['topics'][1:])
+                    event_args = dict(zip([input['name'] for input in event_abi['inputs']], event_data))
+
+                    internal_transactions.append({
+                        "event_name": event_abi['name'],
+                        "args": event_args,
+                    })
+
+            except Exception as e:
+                print(f"Error decoding log: {e}")
+
+
+
+        self.stop_impersonating_account(sender_address)
+
+        print(f"Function call result: {tx_hash}")
+
+        final_sender_view_values = get_all_view_function_values(self.contract, sender_address)
+        final_receiver_view_values = get_all_view_function_values(self.contract, receiver_address)
+
+        try:
+            final_sender_balance = self.contract.functions.balanceOf(sender_address).call()
+            final_receiver_balance = self.contract.functions.balanceOf(receiver_address).call()
+        except:
+            print()
+            final_sender_balance = 0
+            final_receiver_balance = 0
+
+        transaction_details = {
+            "function_name": function_name,
+            "sender_address": sender_address,
+            "args": args,
+            "kwargs": kwargs,
+        }
+
+        state_change_summary = {
+            "statechange":{
+                "sender": {
+                    "totalBalance": final_sender_balance - initial_sender_balance,
+                },
+                "receiver": {
+                    "totalBalance": final_receiver_balance - initial_receiver_balance,
+                }
+            },
+            "details":{
+                "sender": {
+                    "address": sender_address,
+                    "initial_state": initial_sender_view_values,
+                "final_state": final_sender_view_values
+            },
+                "receiver": {
+                    "address": receiver_address,
+                    "initial_state": initial_receiver_view_values,
+                "final_state": final_receiver_view_values,
+            },
+                'internal_transactions': internal_transactions
+            }
+
+        }
+            
+
+        return transaction_details, state_change_summary, None
+
+
+
 
 
 if __name__ == "__main__":
