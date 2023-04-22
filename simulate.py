@@ -98,27 +98,27 @@ class MockContract:
 
 
 
-
+        
         # to be commented:
-        pre_funded_account_address = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
-        pre_funded_account_private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+        pre_funded_account = accounts[0]
         desired_balance = self.web3.toWei(1, "ether") 
         gas_price = self.web3.eth.gasPrice  # Get the current gas price
 
-        nonce = self.web3.eth.getTransactionCount(pre_funded_account_address)
+        #nonce = self.web3.eth.getTransactionCount(pre_funded_account.address)
         transaction = {
             'to': sender_address,
             'value': desired_balance,
             'gas': 21000,
             'gasPrice': gas_price,
-            'nonce': nonce,
+            #'nonce': nonce,
             'chainId': self.web3.eth.chainId
         }
 
-        signed_txn = self.web3.eth.account.signTransaction(transaction, pre_funded_account_private_key)
-        txn_hash = self.web3.eth.sendRawTransaction(signed_txn.rawTransaction)
-        txn_receipt = self.web3.eth.waitForTransactionReceipt(txn_hash)
+        self.impersonate_account(pre_funded_account.address)
+        tx_hash = self.web3.eth.send_transaction(transaction)
+        receipt = self.web3.eth.waitForTransactionReceipt(tx_hash)
 
+        self.stop_impersonating_account(pre_funded_account.address)
 
 
         def get_all_view_function_values(contract, address):
@@ -231,7 +231,7 @@ if __name__ == "__main__":
 
 
     contract_address = "0xe9e7cea3dedca5984780bafc599bd69add087d56"
-    mock_contract = Mock_Contract(contract_address)
+    mock_contract = MockContract(contract_address)
 
     mock_sender = '0x3f5617de2221828110d42588e11c0aade1baa6a4'
     mock_sender = Web3.toChecksumAddress(mock_sender)
